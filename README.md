@@ -30,3 +30,4 @@ GitHub 레포 Settings → Secrets and variables → Actions에 추가:
 - `DEVOPS_AGENT_WEBHOOK_SECRET`
 # trigger 1778834791
 # retrigger 1778835000
+# retry 1778835494
