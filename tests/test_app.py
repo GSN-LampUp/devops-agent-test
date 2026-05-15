@@ -16,7 +16,10 @@ def test_health():
 def test_get_orders():
     """이건 실패 — DB 연결 에러 발생"""
     response = client.get("/api/orders")
-    assert response.status_code == 200  # 실제로는 500이 나옴
+    assert response.status_code == 200, f"Expected 200 but got {response.status_code}"
+    data = response.json()
+    assert "orders" in data
+    assert len(data["orders"]) > 0  # 빈 리스트면 실패
 
 
 def test_order_count():

@@ -23,7 +23,9 @@ jobs:
       - name: Run tests
         id: tests
         continue-on-error: true
-        run: pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
+        run: |
+          pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Check test result
         id: check
