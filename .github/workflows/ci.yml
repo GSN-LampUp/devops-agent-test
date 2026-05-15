@@ -1,0 +1,102 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
+
+      - name: Check test result
+        id: check
+        run: |
+          if grep -q "FAILED" test-output.txt; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+            echo "❌ Tests failed!"
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+            echo "✅ Tests passed!"
+          fi
+
+      # 테스트 실패 시 DevOps Agent에게 Webhook 전송
+      - name: Notify DevOps Agent on failure
+        if: steps.check.outputs.failed == 'true'
+        env:
+          WEBHOOK_URL: ${{ secrets.DEVOPS_AGENT_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.DEVOPS_AGENT_WEBHOOK_SECRET }}
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+          INCIDENT_ID="ci-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}"
+          COMMIT_SHA="${GITHUB_SHA:0:7}"
+          BRANCH="${GITHUB_REF_NAME}"
+          ACTOR="${GITHUB_ACTOR}"
+          
+          # 실패한 테스트 내용 추출
+          FAILED_TESTS=$(grep "FAILED" test-output.txt | head -5 | tr '\n' ' ')
+          ERROR_MSG=$(grep -A2 "ERROR\|FAILED" test-output.txt | head -10 | tr '\n' ' ')
+          
+          PAYLOAD=$(cat <<EOF
+          {
+            "eventType": "incident",
+            "incidentId": "$INCIDENT_ID",
+            "action": "created",
+            "priority": "HIGH",
+            "title": "[CI/CD] Test failure in gsn-lampUp/devops-agent-test on branch $BRANCH",
+            "description": "CI/CD pipeline test failure detected.\n\nRepository: gsn-lampUp/devops-agent-test\nBranch: $BRANCH\nCommit: $COMMIT_SHA\nTriggered by: $ACTOR\n\nFailed tests: $FAILED_TESTS\n\nError details: $ERROR_MSG\n\nThis indicates a code defect was pushed that breaks the test suite. The application may have a database connection issue (ConnectionError: Failed to connect to database).",
+            "timestamp": "$TIMESTAMP",
+            "service": "order-service",
+            "data": {
+              "metadata": {
+                "repository": "gsn-lampUp/devops-agent-test",
+                "branch": "$BRANCH",
+                "commit": "$COMMIT_SHA",
+                "actor": "$ACTOR",
+                "runId": "$GITHUB_RUN_ID",
+                "cluster": "kws-tokyo-cluster",
+                "region": "ap-northeast-1",
+                "failedTests": "$FAILED_TESTS"
+              }
+            }
+          }
+          EOF
+          )
+          
+          # HMAC 서명 생성
+          SIGNATURE=$(echo -n "${TIMESTAMP}:${PAYLOAD}" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -binary | base64)
+          
+          # Webhook 전송
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "x-amzn-event-timestamp: $TIMESTAMP" \
+            -H "x-amzn-event-signature: $SIGNATURE" \
+            -d "$PAYLOAD")
+          
+          echo "Webhook sent to DevOps Agent. HTTP Status: $HTTP_STATUS"
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ DevOps Agent investigation triggered successfully"
+          else
+            echo "⚠️ Webhook returned status $HTTP_STATUS"
+          fi
+
+      - name: Fail the job if tests failed
+        if: steps.check.outputs.failed == 'true'
+        run: exit 1
