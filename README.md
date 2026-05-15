@@ -28,3 +28,4 @@ CI/CD 파이프라인이 실패하면 자동으로 DevOps Agent에게 조사를 
 GitHub 레포 Settings → Secrets and variables → Actions에 추가:
 - `DEVOPS_AGENT_WEBHOOK_URL`
 - `DEVOPS_AGENT_WEBHOOK_SECRET`
+# trigger 1778834791
