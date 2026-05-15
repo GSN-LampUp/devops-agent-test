@@ -24,13 +24,18 @@ jobs:
         id: tests
         continue-on-error: true
         run: |
-          pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          set +e
+          pytest tests/ -v --tb=short > test-output.txt 2>&1
+          TEST_EXIT=$?
+          cat test-output.txt
+          echo "test_exit_code=$TEST_EXIT" >> $GITHUB_OUTPUT
+          exit $TEST_EXIT
 
       - name: Check test result
         id: check
+        if: always()
         run: |
-          if grep -q "FAILED" test-output.txt; then
+          if [ "${{ steps.tests.outcome }}" = "failure" ]; then
             echo "failed=true" >> $GITHUB_OUTPUT
             echo "❌ Tests failed!"
           else
@@ -40,7 +45,7 @@ jobs:
 
       # 테스트 실패 시 DevOps Agent에게 Webhook 전송
       - name: Notify DevOps Agent on failure
-        if: steps.check.outputs.failed == 'true'
+        if: always() && steps.check.outputs.failed == 'true'
         env:
           WEBHOOK_URL: ${{ secrets.DEVOPS_AGENT_WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.DEVOPS_AGENT_WEBHOOK_SECRET }}
@@ -100,5 +105,5 @@ jobs:
           fi
 
       - name: Fail the job if tests failed
-        if: steps.check.outputs.failed == 'true'
+        if: always() && steps.check.outputs.failed == 'true'
         run: exit 1
