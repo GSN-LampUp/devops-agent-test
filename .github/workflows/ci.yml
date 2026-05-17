@@ -7,24 +7,25 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        id: setup-python
-        uses: actions/setup-python@v5
+      - name: Set up JDK 17
+        id: setup-java
+        uses: actions/setup-java@v4
         with:
-          python-version: "3.12"
+          java-version: '17'
+          distribution: 'temurin'
 
-      - name: Install dependencies
-        id: install
-        run: pip install -r requirements.txt
+      - name: Build with Maven
+        id: build
+        run: mvn clean package -DskipTests
 
       - name: Run tests
         id: tests
-        run: pytest tests/ -v --tb=short
+        run: mvn test
 
       # 어떤 단계에서든 실패 시 DevOps Agent에게 Webhook 전송
       - name: Notify DevOps Agent on failure
@@ -39,14 +40,11 @@ jobs:
           BRANCH="${GITHUB_REF_NAME}"
           ACTOR="${GITHUB_ACTOR}"
 
-          # 실패한 단계 식별
           FAILED_STEP="unknown"
-          if [ "${{ steps.setup-python.outcome }}" = "failure" ]; then
-            FAILED_STEP="setup-python"
-          elif [ "${{ steps.install.outcome }}" = "failure" ]; then
-            FAILED_STEP="install-dependencies"
+          if [ "${{ steps.build.outcome }}" = "failure" ]; then
+            FAILED_STEP="maven-build"
           elif [ "${{ steps.tests.outcome }}" = "failure" ]; then
-            FAILED_STEP="run-tests"
+            FAILED_STEP="maven-test"
           fi
 
           PAYLOAD=$(cat <<EOF
@@ -55,8 +53,8 @@ jobs:
             "incidentId": "$INCIDENT_ID",
             "action": "created",
             "priority": "HIGH",
-            "title": "[CI/CD] Pipeline failure in gsn-lampUp/devops-agent-test on branch $BRANCH (step: $FAILED_STEP)",
-            "description": "CI/CD pipeline failure detected.\n\nRepository: gsn-lampUp/devops-agent-test\nBranch: $BRANCH\nCommit: $COMMIT_SHA\nTriggered by: $ACTOR\nFailed step: $FAILED_STEP\n\nThe pipeline failed at the '$FAILED_STEP' stage. Please investigate the build logs for details.",
+            "title": "[CI/CD] Build failure in gsn-lampUp/devops-agent-test on branch $BRANCH (step: $FAILED_STEP)",
+            "description": "CI/CD pipeline failure detected.\n\nRepository: gsn-lampUp/devops-agent-test\nBranch: $BRANCH\nCommit: $COMMIT_SHA\nTriggered by: $ACTOR\nFailed step: $FAILED_STEP\n\nThe Spring Boot application failed at the '$FAILED_STEP' stage.",
             "timestamp": "$TIMESTAMP",
             "service": "devops-agent-test-app",
             "data": {
@@ -75,10 +73,8 @@ jobs:
           EOF
           )
 
-          # HMAC 서명 생성
           SIGNATURE=$(echo -n "${TIMESTAMP}:${PAYLOAD}" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -binary | base64)
 
-          # Webhook 전송
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "x-amzn-event-timestamp: $TIMESTAMP" \
@@ -86,9 +82,3 @@ jobs:
             -d "$PAYLOAD")
 
           echo "Webhook sent to DevOps Agent. HTTP Status: $HTTP_STATUS"
-
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "✅ DevOps Agent investigation triggered successfully"
-          else
-            echo "⚠️ Webhook returned status $HTTP_STATUS"
-          fi
